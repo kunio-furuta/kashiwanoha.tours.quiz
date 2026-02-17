@@ -9,9 +9,10 @@
 *{margin:0;padding:0;box-sizing:border-box}
 html,body{width:100%;height:100%;overflow:hidden;font-family:'Zen Maru Gothic',sans-serif;-webkit-tap-highlight-color:transparent;touch-action:manipulation;background:#2c5e1a}
 #app{width:100%;height:100%;position:relative;overflow:hidden;max-width:430px;margin:0 auto}
-.screen{position:absolute;top:0;left:0;width:100%;height:100%;display:flex;flex-direction:column;align-items:center;transition:opacity 0.4s,transform 0.4s;overflow-y:auto;-webkit-overflow-scrolling:touch}
-.screen.hidden{opacity:0;pointer-events:none;transform:scale(0.95)}
-.screen.active{opacity:1;pointer-events:auto;transform:scale(1)}
+.screen{position:absolute;top:0;left:0;width:100%;height:100%;display:flex;flex-direction:column;align-items:center;overflow-y:auto;-webkit-overflow-scrolling:touch}
+.screen.hidden{display:none!important}
+.screen.active{display:flex}
+.screen.fade-in{animation:screenFadeIn 0.3s ease}
 
 /* ========== TOP SCREEN - faithful to reference ========== */
 #top-screen{
@@ -228,6 +229,10 @@ html,body{width:100%;height:100%;overflow:hidden;font-family:'Zen Maru Gothic',s
   0%{transform:translateY(-30px) rotate(0) scale(1);opacity:0.6}
   100%{transform:translateY(110vh) rotate(360deg) scale(0.5);opacity:0}
 }
+@keyframes screenFadeIn{
+  0%{opacity:0;transform:scale(0.97)}
+  100%{opacity:1;transform:scale(1)}
+}
 
 .ranking-header{text-align:center;width:100%;z-index:1;position:relative;margin-bottom:4px}
 .ranking-header-sub{font-size:0.85em;color:#B8860B;font-weight:700;letter-spacing:0.05em}
@@ -396,6 +401,7 @@ html,body{width:100%;height:100%;overflow:hidden;font-family:'Zen Maru Gothic',s
     <div class="ranking-header">
       <div class="ranking-header-sub"> 柏の葉知識クイズ </div>
       <div class="ranking-header-main"> ランキング </div>
+      <div id="ranking-participants" style="font-size:0.8em;color:#8D6E63;font-weight:700;margin-top:4px"></div>
     </div>
     <div class="ranking-podium" id="ranking-podium"></div>
     <div class="ranking-lower" id="ranking-lower"></div>
@@ -514,10 +520,36 @@ const CHAR_WRONG=["kasshy3","kasshy4"];
 const CHAR_CELEBRATION=["kasshy7","kasshy9","kasshy10"];
 
 let currentQuestions=[],currentIndex=0,totalScore=0,correctCount=0,timerInterval=null,timeLeft=10,answered=false;
-let soundEnabled=false,audioCtx=null,bgmNode=null,bgmGain=null,ranking=[];
+let soundEnabled=true,audioCtx=null,bgmNode=null,bgmGain=null,ranking=[],totalPlayers=0;
 
-async function loadRanking(){try{const r=await window.storage.get('quiz-ranking');if(r&&r.value)ranking=JSON.parse(r.value)}catch(e){ranking=[]}}
-async function saveRanking(){try{await window.storage.set('quiz-ranking',JSON.stringify(ranking),true)}catch(e){}}
+function loadRankingSync(){
+  try{
+    const s=localStorage.getItem('quiz-ranking-v2');
+    if(s){const d=JSON.parse(s);ranking=d.ranking||[];totalPlayers=d.totalPlayers||0}
+    else{ranking=[];totalPlayers=0}
+  }catch(e){ranking=[];totalPlayers=0}
+}
+function saveRankingSync(){
+  try{localStorage.setItem('quiz-ranking-v2',JSON.stringify({ranking,totalPlayers}))}catch(e){}
+}
+async function loadRanking(){
+  loadRankingSync();
+  try{
+    if(typeof window.storage!=='undefined'&&window.storage&&typeof window.storage.get==='function'){
+      const r=await window.storage.get('quiz-ranking-v2');
+      if(r&&r.value){const d=JSON.parse(r.value);ranking=d.ranking||[];totalPlayers=d.totalPlayers||0}
+    }
+  }catch(e){}
+}
+async function saveRanking(){
+  const data=JSON.stringify({ranking,totalPlayers});
+  try{localStorage.setItem('quiz-ranking-v2',data)}catch(e){}
+  try{
+    if(typeof window.storage!=='undefined'&&window.storage&&typeof window.storage.set==='function'){
+      await window.storage.set('quiz-ranking-v2',data,true);
+    }
+  }catch(e){}
+}
 
 function initAudio(){if(audioCtx)return;audioCtx=new(window.AudioContext||window.webkitAudioContext)();bgmGain=audioCtx.createGain();bgmGain.gain.value=0.15;bgmGain.connect(audioCtx.destination)}
 function playBGM(){
@@ -545,7 +577,13 @@ function toggleSound(){soundEnabled=!soundEnabled;document.getElementById('sound
 function shuffle(a){const b=[...a];for(let i=b.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[b[i],b[j]]=[b[j],b[i]]}return b}
 function randomFrom(a){return a[Math.floor(Math.random()*a.length)]}
 function escHtml(s){const d=document.createElement('div');d.textContent=s;return d.innerHTML}
-function showScreen(id){document.querySelectorAll('.screen').forEach(s=>{s.classList.remove('active');s.classList.add('hidden')});const el=document.getElementById(id);el.classList.remove('hidden');el.classList.add('active');el.scrollTop=0}
+function showScreen(id){
+  document.querySelectorAll('.screen').forEach(function(s){s.classList.remove('active','fade-in');s.classList.add('hidden')});
+  var el=document.getElementById(id);
+  el.classList.remove('hidden');
+  el.classList.add('active','fade-in');
+  el.scrollTop=0;
+}
 
 function createLeaves(){
   const c=document.getElementById('leaf-container');
@@ -563,12 +601,16 @@ function showScorePopup(s){const p=document.createElement('div');p.className='sc
 
 function startQuiz(){
   initAudio();if(soundEnabled&&audioCtx.state==='suspended')audioCtx.resume();if(soundEnabled)playBGM();
-  currentQuestions=shuffle(QUIZ_DATA).slice(0,10).map(q=>{const idx=[0,1,2,3],sh=shuffle(idx);return{...q,choices:sh.map(i=>q.choices[i]),answer:sh.indexOf(q.answer)}});
-  currentIndex=0;totalScore=0;correctCount=0;showScreen('quiz-screen');showQuestion();
+  currentQuestions=shuffle(QUIZ_DATA).slice(0,10).map(function(q){var idx=[0,1,2,3],sh=shuffle(idx);return{no:q.no,question:q.question,choices:sh.map(function(i){return q.choices[i]}),answer:sh.indexOf(q.answer),explanation:q.explanation,quizImg:q.quizImg,charImg:q.charImg}});
+  currentIndex=0;totalScore=0;correctCount=0;
+  prepareQuestion();
+  showScreen('quiz-screen');
+  setTimeout(startTimer,100);
 }
 
-function showQuestion(){
+function prepareQuestion(){
   const q=currentQuestions[currentIndex];answered=false;timeLeft=10;
+  if(timerInterval){clearInterval(timerInterval);timerInterval=null}
   document.getElementById('q-current').textContent=(currentIndex+1);
   document.getElementById('quiz-char').src=IMAGES[q.charImg]||IMAGES['kasshy1'];
   const pb=document.getElementById('quiz-photo-box'),pi=document.getElementById('quiz-photo');
@@ -580,9 +622,30 @@ function showQuestion(){
   document.getElementById('next-btn').style.display='none';
   const bar=document.getElementById('timer-bar');bar.style.width='100%';bar.className='timer-bar';
   document.getElementById('timer-text').textContent='10.00';
-  const st=Date.now();if(timerInterval)clearInterval(timerInterval);
-  timerInterval=setInterval(()=>{if(answered)return;const el=(Date.now()-st)/1000;timeLeft=Math.max(0,10-el);const pct=timeLeft/10*100;bar.style.width=pct+'%';document.getElementById('timer-text').textContent=timeLeft.toFixed(2);if(pct<30)bar.className='timer-bar danger';else if(pct<60)bar.className='timer-bar warning';else bar.className='timer-bar';if(timeLeft<=0){clearInterval(timerInterval);handleTimeout()}},50);
   document.getElementById('quiz-screen').scrollTop=0;
+}
+
+function startTimer(){
+  if(answered)return;
+  const st=Date.now();
+  if(timerInterval)clearInterval(timerInterval);
+  timerInterval=setInterval(()=>{
+    if(answered)return;
+    const el=(Date.now()-st)/1000;timeLeft=Math.max(0,10-el);
+    const pct=timeLeft/10*100;
+    const bar=document.getElementById('timer-bar');
+    bar.style.width=pct+'%';
+    document.getElementById('timer-text').textContent=timeLeft.toFixed(2);
+    if(pct<30)bar.className='timer-bar danger';
+    else if(pct<60)bar.className='timer-bar warning';
+    else bar.className='timer-bar';
+    if(timeLeft<=0){clearInterval(timerInterval);handleTimeout()}
+  },50);
+}
+
+function showQuestion(){
+  prepareQuestion();
+  startTimer();
 }
 
 function selectAnswer(idx){
@@ -613,34 +676,62 @@ function handleTimeout(){
 function nextQuestion(){currentIndex++;if(currentIndex>=10)showResult();else showQuestion()}
 
 async function showResult(){
-  await loadRanking();const ur=getRank(totalScore);showScreen('result-screen');
+  loadRankingSync();
+  try{await loadRanking()}catch(e){}
+  totalPlayers++;
+  const ur=getRank(totalScore);
+  try{await saveRanking()}catch(e){saveRankingSync()}
+  
   document.getElementById('result-char').src=correctCount>=8?IMAGES['kasshy9']:correctCount>=5?IMAGES['kasshy7']:IMAGES['kasshy3'];
   document.getElementById('result-correct').textContent=correctCount;
   document.getElementById('result-score').textContent=totalScore.toLocaleString();
+  
+  const btn=document.getElementById('result-action-btn');
+  const msg=document.getElementById('result-rank-msg');
+  
+  if(ur<=10){
+    msg.innerHTML='🎉 <strong>'+totalPlayers+'人中 '+ur+'位</strong>にランクイン！<br>ニックネームを登録しよう！';
+    btn.textContent='ニックネームを入力';
+    btn.onclick=function(){
+      document.getElementById('nickname-char').src=IMAGES[randomFrom(CHAR_CELEBRATION)];
+      showScreen('nickname-screen');
+    };
+  }else{
+    msg.innerHTML='現在の順位: <strong>'+totalPlayers+'人中 '+ur+'位</strong>';
+    btn.textContent='ランキングを見る';
+    btn.onclick=async function(){
+      ranking.push({name:'ゲスト',score:totalScore,date:new Date().toISOString()});
+      ranking.sort(function(a,b){return b.score-a.score});
+      if(ranking.length>200)ranking=ranking.slice(0,200);
+      try{await saveRanking()}catch(e){saveRankingSync()}
+      showRanking();
+    };
+  }
   if(correctCount>=8)showConfetti();
-  const btn=document.getElementById('result-action-btn'),msg=document.getElementById('result-rank-msg');
-  if(ur<=10){msg.textContent='🎉 '+ur+'位にランクイン！ニックネームを登録しよう！';btn.textContent='ニックネームを入力';btn.onclick=()=>{showScreen('nickname-screen');document.getElementById('nickname-char').src=IMAGES[randomFrom(CHAR_CELEBRATION)]}}
-  else{msg.textContent='現在の順位: '+ur+'位';btn.textContent='ランキングを見る';btn.onclick=()=>showRanking()}
+  showScreen('result-screen');
 }
 function getRank(s){let r=1;for(const e of ranking)if(e.score>=s)r++;return r}
 
 async function submitNickname(){
   const name=document.getElementById('nickname-input').value.trim()||'ゲスト';
-  ranking.push({name,score:totalScore,date:new Date().toISOString()});
-  ranking.sort((a,b)=>b.score-a.score);if(ranking.length>100)ranking=ranking.slice(0,100);
-  await saveRanking();document.getElementById('nickname-input').value='';showRanking();
+  ranking.push({name:name,score:totalScore,date:new Date().toISOString()});
+  ranking.sort(function(a,b){return b.score-a.score});
+  if(ranking.length>200)ranking=ranking.slice(0,200);
+  try{await saveRanking()}catch(e){saveRankingSync()}
+  document.getElementById('nickname-input').value='';
+  showRanking();
 }
 
 function showRanking(){
-  showScreen('ranking-screen');
   document.getElementById('ranking-char').src=IMAGES[randomFrom(CHAR_CELEBRATION)];
+  document.getElementById('ranking-participants').textContent='参加者数: '+totalPlayers+'人';
   const podium=document.getElementById('ranking-podium');podium.innerHTML='';
   const lower=document.getElementById('ranking-lower');lower.innerHTML='';
   const top=ranking.slice(0,10);
-  if(!top.length){podium.innerHTML='<div style="text-align:center;padding:30px;color:#8D6E63;font-weight:700">まだ記録がありません</div>';return}
+  if(!top.length){podium.innerHTML='<div style="text-align:center;padding:30px;color:#8D6E63;font-weight:700">まだ記録がありません</div>';showScreen('ranking-screen');return}
 
   const medals=['gold','silver','bronze'],ranks=['r1','r2','r3'],trophies=['🏆','🏆','🏆'];
-  top.forEach((e,i)=>{
+  top.forEach(function(e,i){
     if(i<3){
       const card=document.createElement('div');card.className='podium-card '+medals[i];
       card.style.animationDelay=(i*0.15)+'s';
@@ -656,14 +747,17 @@ function showRanking(){
       lower.appendChild(row);
     }
   });
+  showScreen('ranking-screen');
 }
 
 function backToTop(){showScreen('top-screen')}
 
-window.addEventListener('DOMContentLoaded',async()=>{
+window.addEventListener('DOMContentLoaded',async function(){
   document.getElementById('top-leafy').src=IMAGES['leafy1'];
   document.getElementById('top-kasshy').src=IMAGES['kasshy7'];
-  createLeaves();createSakura();await loadRanking();
+  createLeaves();createSakura();
+  loadRankingSync();
+  try{await loadRanking()}catch(e){}
 });
 </script>
 </body>
