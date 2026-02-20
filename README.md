@@ -9,9 +9,10 @@ images/
     q1.jpg ～ q26.jpg
   characters_excel/           ← Excel内キャラクタ画像（26枚）
     c1.png ～ c26.png
-  characters_original/        ← オリジナルキャラクタ画像（19枚）
-    kasshy1.png ～ kasshy10.png   （かっしー）
-    leafy1.png ～ leafy10.png     （リーフィ）
+  characters_green/           ← かっしー（緑）キャラクタ画像（27枚）
+    green_1.png ～ green_27.png
+  characters_pink/            ← リーフィ（ピンク）キャラクタ画像（42枚）
+    pink_1.png ～ pink_42.png
   reference_screens/          ← デザイン参考画面（3枚）
     top_screen.jpg
     quiz_screen.jpg
